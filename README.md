@@ -1,4 +1,4 @@
-# Blog Post - Deploying HeyEmoji using BitOps
+# Deploying HeyEmoji using BitOps
 
 ## Context
 Explain what we are wanting to accomplish and why we might want to accomplish it
@@ -43,18 +43,19 @@ Before we continue let's quickly review what an ops repo is and where it belongs
 
 The ingredients as a whole, would be considered the application. Each ingredient is a specialized component which will be used to achieve a desired result. It's great having these ingredients, but without knowing what to do with them, they won't be very tasty (or useful) to us. 
 
-This is why we need instructions (An OpsRepo)! The instructions explain how to cook, cut and combine our raw ingredients and tranform them into a fully working recipe that we can enjoy with others.
+This is why we need instructions (An OpsRepo)! The instructions explain how to cook, cut and combine our raw ingredients and transform them into a fully working recipe that we can enjoy with others.
 
-So let's recap the "what is"; We have our application, which is made up of small specialized components, which work together to achieve a desired result. And we have our OpsRepo which explains how to combine the raw ingredients("build"), as well as make("deploy") it so others may try it themselves. Of course there is a little bit more nuance than that but this gets the point across. 
+So let's recap the "what is"; We have our application, which is made up of small specialized components, which work together to achieve a desired result. And we have our OpsRepo which explains how to combine the raw ingredients("build"), as well as serve("deploy") it so others so that they may try it themselves. Of course there is a little bit more nuance than that but this gets the point across. 
 
-Now let's answer the "where". When creating an operation repo, much like a recipe, there are a few ways of packaging and presenting. Going back to using the ingredient & instruction methaphors; We could package the instrutions and ingredients together, a la a daily food delivery system (prepared meal kits for example), but by doing it this way the ingredients and instrutions become intimately tied togeher, a change to one must be represented immeidately by the other. An alternative approach is to package the ingredients and instructions separately. The benefit to this approach is that an update to the instructions doesn't effect the ingredients and vice versa.
+Now let's answer the "where". When creating an operation repo, much like a recipe, there are a few ways of packaging and presenting. Using the same analogy as above; We could package the instructions and ingredients together, a la a daily food delivery system (prepared meal kits for example), but by doing it this way the ingredients and instructions become intimately tied together, a change to one must be represented immediately by the other. An alternative approach is to package the ingredients and instructions separately. The benefit to this approach is that an update to the instructions doesn't effect the ingredients and vice versa. The instructions would tell you what ingredients you would need from the grocery store 
 
-In this tutorial we will be using a combined repo that will contain our application+OpsRepo, however, it is suggested that you use a separate repo for your own applications+OpsRepos for more granular control over the application code + infrastructure.
+In this tutorial we will be following best practices by keeping our application and operation repos separate. 
 
 ### ***Configure Terraform*** 
 ### **Managing Terraform State files**
 Either replace the contents of test/terraform/bitops.before-deploy.d/my-before-script.sh or create a new file called `create-tf-bucket.sh` with the content of;
 
+#### `terraform/bitops.before-deploy.d/create-tf-bucket.sh`
 ```
 aws s3api create-bucket --bucket $TF_STATE_BUCKET --region $AWS_DEFAULT_REGION --create-bucket-configuration LocationConstraint=$AWS_DEFAULT_REGION
 ```
@@ -71,7 +72,7 @@ Replace the `bucket = "YOUR BUCKET NAME" with the bucket name that was specified
 
 Providers are integrations (usually created/maintained by the company that owns the integration) that instructs Terraform on how to perform requests. You can think of them like node modules, or python packages.
 
-#### `providers.tf`
+#### `terraform/providers.tf`
 ```
 terraform {
     required_version = ">= 0.12"
@@ -104,7 +105,7 @@ Next create a `vars.tf` file.
 
 We are going to put any variables that Terraform will be using here to consolidate the configuration settings.
 
-#### `vars.tf`
+#### `terraform/vars.tf`
 ```
 /* set up env variables */
 variable "AWS_DEFAULT_REGION" {
@@ -123,7 +124,7 @@ Create another file called `vpc.tf`
 
 Here we are going to configure our AWS Virtual Private Cloud which our EC2 instance will be hosted within.
 
-#### `vpc.tf`
+#### `terraform/vpc.tf`
 ```
 /* get region from AWS_DEFAULT_REGION */
 data "aws_region" "current" {}
@@ -166,7 +167,7 @@ resource "aws_route_table_association" "mfi_route_table_association" {
 Next we will create a Amazon Machine Image or ami, this provides information required to launch instances within AWS.
 
 
-#### `ami.tf`
+#### `terraform/ami.tf`
 ```
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -183,9 +184,9 @@ data "aws_ami" "ubuntu" {
 ```
 
 ### **AWS Security Groups**
-So now we need to tell AWS what permissions our ec2 instance has. In the case below we are opening up SSH as well as websocket traffic. We don't need to make our instance accessable from the outer world, so this will work.  
+So now we need to tell AWS what permissions our ec2 instance has. In the case below we are opening up SSH as well as websocket traffic. We don't need to make our instance accessible from the outer world, so this will work.  
 
-#### `security-groups.tf`
+#### `terraform/security-groups.tf`
 ```
 /* local vars */
 locals {
@@ -240,7 +241,7 @@ resource "aws_security_group" "allow_traffic" {
 And finally for the Terraform files, create the `instance.tf` file.
 This tells Terraform that we are looking to provision a simple t3.micro ec2 instance that will contain our application.
 
-#### `instance.tf`
+#### `terraform/instance.tf`
 ```
 resource "tls_private_key" "key" {
   algorithm = "RSA"
@@ -274,11 +275,37 @@ Some of the files that were generated aren't in scope for this blog. Please dele
 1. bitops.before.deploy
 1. inventory.yml
 
-### **Create Ansible Tasks**
-### **Create Ansible Variables**
 ### **Create Ansible Playbook**
+Let's define our Ansible Playbook, for those unfamiliar this will be our automation blueprint, we will specify which tasks we want to run here. 
+
+Create the following files within the `Ansible/` folder. 
+#### `Ansible/playbook.yaml`
+```
+- hosts: bitops_servers
+  become: true
+  vars_files:
+    - vars/default.yml
+  tasks:
+  - name: Include install
+    include_tasks: tasks/install.yml
+  - name: Include fetch
+    include_tasks: tasks/fetch.yml
+  - name: Include build
+    include_tasks: tasks/build.yml
+  - name: Include start
+    include_tasks: tasks/start.yml
+  - debug: 
+      msg: "Hello from Ansible!"
+```
+
+
+
 
 ### **Create Ansible Configuration**
+
+### **Create Ansible Tasks**
+### **Create Ansible Variables**
+
 
 
 
@@ -299,12 +326,13 @@ Some of the files that were generated aren't in scope for this blog. Please dele
 ### **Deploy HeyEmoji using BitOps + Github Workflows**
 ```
 docker run \
--e ENVIRONMENT="blog-test" \
+-e ENVIRONMENT="test" \
 -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
 -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
 -e AWS_DEFAULT_REGION="us-east-2" \
--e TF_STATE_BUCKET="heyemoji_blog" \ 
+-e TF_STATE_BUCKET="heyemoji_blog" \
 -e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API" \
+-e TERRAFORM_DESTROY=true \
 -v $(pwd):/opt/bitops_deployment \
 bitovi/bitops:latest
 ```
