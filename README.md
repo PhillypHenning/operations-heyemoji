@@ -1,7 +1,9 @@
 # Deploying HeyEmoji using BitOps
 
 ## Context
-Explain what we are wanting to accomplish and why we might want to accomplish it
+In this tutorial we are going to deploy the HeyEmoji Slack app to AWS using BitOps! 
+
+HeyEmoji is a fantastic reward system teams can use to recognize each others accomplishments, dedication and hard work. BitOps is an Operations Repo orchestration tool which enables teams to write their infrastructure as code and deploy that code easily across multiple environments.
 
 <hr/>
 
@@ -51,6 +53,8 @@ Now let's answer the "where". When creating an operation repo, much like a recip
 
 In this tutorial we will be following best practices by keeping our application and operation repos separate. 
 
+<hr />
+
 ### ***Configure Terraform*** 
 ### **Managing Terraform State files**
 Either replace the contents of test/terraform/bitops.before-deploy.d/my-before-script.sh or create a new file called `create-tf-bucket.sh` with the content of;
@@ -70,7 +74,7 @@ Either delete and create or rename `main.tf` to `create-tf-bucket.sh`.
 
 Replace the `bucket = "YOUR BUCKET NAME" with the bucket name that was specified in the above step. 
 
-Providers are integrations (usually created/maintained by the company that owns the integration) that instructs Terraform on how to perform requests. You can think of them like node modules, or python packages.
+Providers are integrations (usually created/maintained by the company that owns the integration) that instructs Terraform on how to perform a given request.
 
 #### `terraform/providers.tf`
 ```
@@ -191,7 +195,7 @@ So now we need to tell AWS what permissions our ec2 instance has. In the case be
 /* local vars */
 locals {
   aws_tags = {
-    RepoName = " mmcdole/heyemoji"
+    RepoName = " <USERNAME>/heyemoji"
     OpsRepoEnvironment = "blog-test"
     OpsRepoApp = "heyemoji-blog"
   }
@@ -238,8 +242,8 @@ resource "aws_security_group" "allow_traffic" {
 
 
 ### **AWS EC2 Instance**
-And finally for the Terraform files, create the `instance.tf` file.
-This tells Terraform that we are looking to provision a simple t3.micro ec2 instance that will contain our application.
+Create the `instance.tf` file.
+This tells Terraform that we are looking to provision a simple t3.micro ec2 instance, sets the security groups (that we created above) and adds itself to the VPC network.
 
 #### `terraform/instance.tf`
 ```
@@ -264,10 +268,44 @@ resource "aws_instance" "server" {
 }
 ```
 
+### Create Ansible inventory
+And finally for the Terraform files, we are going to create an inventory and context file that Ansible will use. The `inventory.tmpl` will be loaded by the Ansible config, and the `locals.tf` file will inject the ip and ssh_keyfile values into the tmpl file during the Terraform apply stage. 
+
+#### `terraform/inventory.tmpl`
+```
+heyemoji_blog_servers:
+ hosts:
+   ${ip} 
+ vars:
+   ansible_ssh_user: ubuntu
+   ansible_ssh_private_key_file: ${ssh_keyfile}
+```
+
+#### `terraform/locals.tf`
+```
+resource "local_file" "private_key" {
+  # This creates a keyfile pair that allows ansible to connect to the ec2 container
+  sensitive_content = tls_private_key.key.private_key_pem
+  filename          = format("%s/%s/%s", abspath(path.root), ".ssh", "heyemoji-blog-ssh-key.pem")
+  file_permission   = "0600"
+}
+
+resource "local_file" "ansible_inventory" {
+  content = templatefile("inventory.tmpl", {
+    ip          = aws_instance.server.public_ip,
+    ssh_keyfile = local_file.private_key.filename
+  })
+  filename = format("%s/%s", abspath(path.root), "inventory.yaml")
+}
+```
+
+
+
+<hr />
+
 ### ***Configure Ansible***
 ### **A quick note on images**
-In this tutorial we are going to clone, build and deploy our image using Ansible.
-
+In this tutorial we are going to clone, build and deploy our image using Ansible. It's worth noting that this doesn't have to be the same pattern you use, in fact, it is recommended that the application build is done separate from the operations repo. 
 
 ### **Clean up generated files**
 Some of the files that were generated aren't in scope for this blog. Please delete the following generated files/folders;
@@ -276,12 +314,12 @@ Some of the files that were generated aren't in scope for this blog. Please dele
 1. inventory.yml
 
 ### **Create Ansible Playbook**
-Let's define our Ansible Playbook, for those unfamiliar this will be our automation blueprint, we will specify which tasks we want to run here. 
+Let's define our Ansible Playbook. For those unfamiliar this will be our automation blueprint, we will specify which tasks we want to run here and define our tasks in their own files in a later section. 
 
 Create the following files within the `Ansible/` folder. 
-#### `Ansible/playbook.yaml`
+#### `ansible/playbook.yaml`
 ```
-- hosts: bitops_servers
+- hosts: heyemoji_blog_servers
   become: true
   vars_files:
     - vars/default.yml
@@ -298,16 +336,119 @@ Create the following files within the `Ansible/` folder.
       msg: "Hello from Ansible!"
 ```
 
-
-
-
 ### **Create Ansible Configuration**
+Next, we are going to create an Ansible configuration file, this informs Ansible where the terraform generated inventory file can be found, as well as a few other notable setting flags. 
+
+
+#### `ansible/inventory.cfg`
+```
+[defaults]
+inventory=../terraform/inventory.yaml
+host_key_checking = False
+transport = ssh
+
+[ssh_connection]
+ssh_args = -o ForwardAgent=yes
+```
+
+### **Create Ansible Variables**
+Next we are going to set up ENV vars we will use later in our Ansible tasks (next step). Make sure to update the USERNAME and REPO to represent your forked HeyEmoji path. 
+
+#### `ansible/vars/default.yml`
+```
+heyemoji_repo: "https://github.com/<USERNAME>/heyemoji.git"
+heyemoji_path: /home/ubuntu/heyemoji
+
+heyemoji_bot_name:	heyemoji-dev
+heyemoji_database_path:	./data/
+heyemoji_slack_api_token: "{{ lookup('env', 'HEYEMOJI_SLACK_API_TOKEN') }}"
+heyemoji_slack_emoji:	star:1
+heyemoji_slack_daily_cap: "5"
+heyemoji_websocket_port: "3334"
+
+create_containers: 1
+default_container_image: heyemoji:latest
+default_container_name: heyemoji
+default_container_image: ubuntu
+default_container_command: /heyemoji
+```
+
 
 ### **Create Ansible Tasks**
-### **Create Ansible Variables**
+Alright now the fun part! We have to define our Ansible tasks, which are the specific instructions we want our playbook to execute on. In this tutorial we will need; a build, fetch, install and deploy task. 
 
+#### `ansible/tasks/build.yml`
+```
+- name: build container image
+  docker_image:
+    name: "{{ default_container_image }}"
+    build:
+      path: "{{ heyemoji_path }}"
+    source: build
+    state: present
+```
 
+#### `ansible/tasks/fetch.yml`
+```
+- name: git clone heyemoji
+  git:
+    repo: "{{ heyemoji_repo }}"
+    dest: "{{ heyemoji_path }}"
+  become: no
+```
 
+#### `ansible/tasks/install.yml`
+```
+# install docker
+- name: Install aptitude using apt
+  apt: name=aptitude state=latest update_cache=yes force_apt_get=yes
+
+- name: Install required system packages
+  apt: name={{ item }} state=latest update_cache=yes
+  loop: [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3-pip', 'virtualenv', 'python3-setuptools']
+
+- name: Add Docker GPG apt Key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker Repository
+  apt_repository:
+    repo: deb https://download.docker.com/linux/ubuntu bionic stable
+    state: present
+
+- name: Update apt and install docker-ce
+  apt: update_cache=yes name=docker-ce state=latest
+
+- name: Install Docker Module for Python
+  pip:
+    name: docker
+```
+
+#### `ansible/tasks/start.yml`
+```
+# Creates the number of containers defined by the variable create_containers, using values from vars file
+- name: Create default containers
+  docker_container:
+    name: "{{ default_container_name }}{{ item }}"
+    image: "{{ default_container_image }}"
+    command: "{{ default_container_command }}"
+    exposed_ports: "{{ heyemoji_websocket_port }}"
+    env:
+      HEY_BOT_NAME:	"{{ heyemoji_bot_name }}"
+      HEY_DATABASE_PATH: "{{ heyemoji_database_path }}"
+      HEY_SLACK_TOKEN: "{{ heyemoji_slack_api_token }}"
+      HEY_SLACK_EMOJI:	"{{ heyemoji_slack_emoji }}"
+      HEY_SLACK_DAILY_CAP:	"{{ heyemoji_slack_daily_cap }}"
+      HEY_WEBSOCKET_PORT:	"{{ heyemoji_websocket_port }}"
+    # restart a container
+    # state: started
+  register: command_start_result
+  loop: "{{ range(0, create_containers, 1)|list }}"
+
+- debug:
+    var: command_start_result.0.stdout_lines
+```
 
 ### **Create Slack Bot and add to Workspace**
 (Instructions taken from the HeyEmoji README)
@@ -319,9 +460,6 @@ Create the following files within the `Ansible/` folder.
 6. Copy your **Bot User OAuth Access Token** for your `HEY_SLACK_API_TOKEN`
 7. Run `heyemoji` specifying the above token! 🎉
 
-### Create a Github Workflow
-
-### Update Github Secrets
 
 ### **Deploy HeyEmoji using BitOps + Github Workflows**
 ```
@@ -331,13 +469,40 @@ docker run \
 -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
 -e AWS_DEFAULT_REGION="us-east-2" \
 -e TF_STATE_BUCKET="heyemoji_blog" \
--e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API" \
--e TERRAFORM_DESTROY=true \
+-e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
 -v $(pwd):/opt/bitops_deployment \
 bitovi/bitops:latest
 ```
 
 ### Verify deployment
+Open Slack and create a new private channel on the left. Add your new bot to the channel which you can do by @mentioning them in the channel's chat. Once the bot has been added type in chat `@HeyEmoji - Blog leaderboards`, a response should pop up saying; `Nobody has given any emoji points yet!`
+
+This tells us our bot is alive!! You can now hand out awards to others in the chat by typing `Hey @member have a :star:`
+
+### Cleanup
+To delete the resources you've provisioned simply add `-e TERRAFORM_DESTROY=true \` to the docker run command
+
+```
+docker run \
+-e ENVIRONMENT="test" \
+-e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+-e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+-e AWS_DEFAULT_REGION="us-east-2" \
+-e TF_STATE_BUCKET="heyemoji_blog" \
+-e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
+-e TERRAFORM_DESTROY=true \
+-v $(pwd):/opt/bitops_deployment \
+bitovi/bitops:latest
+```
+
+
+
+
+
+
+
+
+
 
 
 
@@ -347,10 +512,13 @@ docker run \
 -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
 -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
 -e AWS_DEFAULT_REGION="us-east-2" \
+-e TERRAFORM_DESTORY=true \
 -e TF_STATE_BUCKET="heyemoji-blog" \
--e HEYMOJI_SLACK_API_TOKEN="xoxb-2374139173-2444042423318-677piNpfTeDktszIjq46CfwX" \
+-e HEYMOJI_SLACK_API_TOKEN="xoxb-2374139173-2444042423318-wWbmEeS7yptM1jV3isbRtl8w" \
 -v $(pwd):/opt/bitops_deployment \
 bitovi/bitops:latest
 ```
+
+"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC7UoTcXKnj0nD6q/wduTKFN2zNaKEqVyZT84XrbkdJ2mmhJIF4CAYo1vFcjx0ofnqr1E+DIEutvxqjtENu6nu0yy0pHHu16Ai5Iy+Y4DxCFDkJYksw0Cb7j9wfHlbCyx/kBIRhtx3UrnIqAZjiISooZNLwgsGT46XktDGlr/JFQLAiL+VfNBkx3eBl/RPeCGb2a4nNJwI0ScxLX5D5kuifFwEnFIXSG5YqK7KVwU2HwJORqIe1DM5oEtAFFusF7VY9H1qnXwPqZDRgLi6uYuLPl1hIEMVb4bixP6/mu44WBa/RFEv//QcUtX2ZHFTJpDSqOo1dGGjenUTsMOU3vqNu84HQ7zGRveiw0aI98KfPbGAdB7Bzg3RbYRAa97HoWVVVIZftZza6BA8MvOwDxmZ+RlxPizc2KACb+dcVBP4a3z+/FKatdEsAQSICQ9cENaPN/0HOSl2OwFM6KnM3IeZfYMilIY33me7ozFbFSDdRn8Q2Y33vIJWz6oIRO+J/jpWD3Q4XfBWZyD58IGEvT/Xk9hG59dAJAOmpTjSDcy4QMoO5yK4Hwt7kunF4+WclxrzEJVfI7pI8ceFRXJkW16fK3r0+MLuyWqKvjPU5hMyJSpX5bH7SuaiEvS8OGUYUNEUbpqn+oiE+Of91q0u6crAk4A3tp43I6TgwfU3ZVwTVYQ=="
 
 typically, we’d want to separately build the image and publish to a container registry rather than pull the code and build in place

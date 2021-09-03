@@ -1,5 +1,0 @@
-my-servers:
-  hosts:
-    localhost  
-  vars:
-    ansible_connection: local
