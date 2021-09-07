@@ -16,4 +16,8 @@ resource "aws_instance" "server" {
   subnet_id                   = aws_subnet.main.id
   vpc_security_group_ids      = [aws_security_group.allow_traffic.id]
   monitoring                  = true
+
+  tags = {
+    Name = "HeyEmoji-blog"
+  }
 }

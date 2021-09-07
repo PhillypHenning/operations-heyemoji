@@ -11,5 +11,5 @@ heyemoji_websocket_port: "3334"
 create_containers: 1
 default_container_image: heyemoji:latest
 default_container_name: heyemoji
-#default_container_image: ubuntu
+default_container_image: ubuntu
 default_container_command: /heyemoji
