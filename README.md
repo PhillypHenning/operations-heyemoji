@@ -3,7 +3,7 @@
 ## Context
 In this tutorial we are going to deploy the HeyEmoji Slack app to AWS using BitOps! 
 
-HeyEmoji is a fantastic reward system teams can use to recognize each others accomplishments, dedication and hard work. BitOps is an Operations Repo orchestration tool which enables teams to write their infrastructure as code and deploy that code easily across multiple environments.
+HeyEmoji is a fantastic reward system teams can use to recognize each others accomplishments, dedication and hard work. BitOps is an Operations Repo orchestration tool which enables teams to write their infrastructure as code and deploy that code easily across multiple environments. 
 
 <hr/>
 
@@ -307,6 +307,14 @@ resource "local_file" "ansible_inventory" {
 ### **A quick note on images**
 In this tutorial we are going to clone, build and deploy our image using Ansible. It's worth noting that this doesn't have to be the same pattern you use, in fact, it is recommended that the application build is done separate from the operations repo. 
 
+You may be wondering why we would want to separate the build and deployment steps. Well let's consider the OpsRepo once again, the reason we separate the Application and OpsRepos is to have distinct configurations and git histories. 
+
+If the application repo handles the building of images, then a change to the application code would initiate the image build. The application repo and the application images have a logical flow to them. A change in the code, *could* kickoff a new build and create a new image that represents the change. 
+
+Conversely, if the OpsRepo was to handle the application building, it would be responsible for initiating the new image build, but it wouldn't be aware of changes (not by default). Images built using the OpsRepo would pull the latest state of the code and build an image based on that. Though this isn't a wrong way to go about things, it adds unnecessary connections between the OpsRepo and AppRepo and sets up a vector of failure that wouldn't be there is the AppRepo handled its own image building. 
+
+All this said, for ease of blog writing, we are going to keep our setup simple and manually pull and build the image. While we do that, keep the above in mind and see if you can find places where this setup may cause headaches. 
+
 ### **Clean up generated files**
 Some of the files that were generated aren't in scope for this blog. Please delete the following generated files/folders;
 1. bitops.after.deploy
@@ -377,7 +385,9 @@ default_container_command: /heyemoji
 ### **Create Ansible Tasks**
 Alright now the fun part! We have to define our Ansible tasks, which are the specific instructions we want our playbook to execute on. In this tutorial we will need; a build, fetch, install and deploy task. 
 
+
 #### `ansible/tasks/build.yml`
+
 ```
 - name: build container image
   docker_image:
@@ -445,42 +455,41 @@ Alright now the fun part! We have to define our Ansible tasks, which are the spe
     # state: started
   register: command_start_result
   loop: "{{ range(0, create_containers, 1)|list }}"
-
-- debug:
-    var: command_start_result.0.stdout_lines
 ```
 
 ### **Create Slack Bot and add to Workspace**
-(Instructions taken from the HeyEmoji README)
+Using the Instructions taken from the HeyEmoji README;
 1. Browse to https://api.slack.com/apps?new_classic_app=1
 2. Assign a name and workspace to your new Slack Bot Application
 3. `Basic Information` > Set display name and icon
 4. `App Home` > Add Legacy Bot User
 5. `OAuth & Permissions` > Install App to Workspace
-6. Copy your **Bot User OAuth Access Token** for your `HEY_SLACK_API_TOKEN`
+6. Copy your **Bot User OAuth Access Token** for your `HEYEMOJI_SLACK_API_TOKEN`
 7. Run `heyemoji` specifying the above token! 🎉
 
 
 ### **Deploy HeyEmoji using BitOps + Github Workflows**
+And with all the above in place we are finally ready to deploy our HeyEmoji Slack app!! Make sure to replace the "VALUES" to represent your credentials and tokens. 
+
 ```
 docker run \
 -e ENVIRONMENT="test" \
--e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
--e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+-e AWS_ACCESS_KEY_ID="AWS_ACCESS_KEY_ID" \
+-e AWS_SECRET_ACCESS_KEY="AWS_SECRET_ACCESS_KEY" \
 -e AWS_DEFAULT_REGION="us-east-2" \
 -e TF_STATE_BUCKET="heyemoji_blog" \
--e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
+-e HEYEMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
 -v $(pwd):/opt/bitops_deployment \
 bitovi/bitops:latest
 ```
 
 ### Verify deployment
-Open Slack and create a new private channel on the left. Add your new bot to the channel which you can do by @mentioning them in the channel's chat. Once the bot has been added type in chat `@HeyEmoji - Blog leaderboards`, a response should pop up saying; `Nobody has given any emoji points yet!`
+Open Slack and create a new private channel. Add your new bot to the channel which you can do by @mentioning them in the channel's chat. Once the bot has been added type in chat `@HeyEmoji - Blog leaderboards`, a response should pop up saying; `Nobody has given any emoji points yet!`
 
 This tells us our bot is alive!! You can now hand out awards to others in the chat by typing `Hey @member have a :star:`
 
 ### Cleanup
-To delete the resources you've provisioned simply add `-e TERRAFORM_DESTROY=true \` to the docker run command
+To delete the resources you've provisioned simply add `"-e TERRAFORM_DESTROY=true \"` to the docker run command
 
 ```
 docker run \
@@ -489,36 +498,12 @@ docker run \
 -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
 -e AWS_DEFAULT_REGION="us-east-2" \
 -e TF_STATE_BUCKET="heyemoji_blog" \
--e HEYMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
+-e HEYEMOJI_SLACK_API_TOKEN="YOUR SLACK API TOKEN" \
 -e TERRAFORM_DESTROY=true \
 -v $(pwd):/opt/bitops_deployment \
 bitovi/bitops:latest
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-```
-docker run \
--e ENVIRONMENT="test" \
--e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
--e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
--e AWS_DEFAULT_REGION="us-east-2" \
--e TERRAFORM_DESTORY=true \
--e TF_STATE_BUCKET="heyemoji-blog" \
--e HEYMOJI_SLACK_API_TOKEN="xoxb-2374139173-2444042423318-wWbmEeS7yptM1jV3isbRtl8w" \
--v $(pwd):/opt/bitops_deployment \
-bitovi/bitops:latest
-```
-
-"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC7UoTcXKnj0nD6q/wduTKFN2zNaKEqVyZT84XrbkdJ2mmhJIF4CAYo1vFcjx0ofnqr1E+DIEutvxqjtENu6nu0yy0pHHu16Ai5Iy+Y4DxCFDkJYksw0Cb7j9wfHlbCyx/kBIRhtx3UrnIqAZjiISooZNLwgsGT46XktDGlr/JFQLAiL+VfNBkx3eBl/RPeCGb2a4nNJwI0ScxLX5D5kuifFwEnFIXSG5YqK7KVwU2HwJORqIe1DM5oEtAFFusF7VY9H1qnXwPqZDRgLi6uYuLPl1hIEMVb4bixP6/mu44WBa/RFEv//QcUtX2ZHFTJpDSqOo1dGGjenUTsMOU3vqNu84HQ7zGRveiw0aI98KfPbGAdB7Bzg3RbYRAa97HoWVVVIZftZza6BA8MvOwDxmZ+RlxPizc2KACb+dcVBP4a3z+/FKatdEsAQSICQ9cENaPN/0HOSl2OwFM6KnM3IeZfYMilIY33me7ozFbFSDdRn8Q2Y33vIJWz6oIRO+J/jpWD3Q4XfBWZyD58IGEvT/Xk9hG59dAJAOmpTjSDcy4QMoO5yK4Hwt7kunF4+WclxrzEJVfI7pI8ceFRXJkW16fK3r0+MLuyWqKvjPU5hMyJSpX5bH7SuaiEvS8OGUYUNEUbpqn+oiE+Of91q0u6crAk4A3tp43I6TgwfU3ZVwTVYQ=="
-
-typically, we’d want to separately build the image and publish to a container registry rather than pull the code and build in place
+### Final word
+Great work! You've deployed the HeyEmoji slack app to your aws infrastructure using Terraform and Ansible, and we orchestrated the build + deploy using BitOps. We learned a few concepts such as what an OpsRepo is and what best practices there are when building our application images. 
