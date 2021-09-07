@@ -1,7 +1,7 @@
 # Deploying HeyEmoji using BitOps
 
 ## Context
-In this tutorial we are going to deploy the HeyEmoji Slack app to AWS using BitOps! 
+In this tutorial we are going to deploy the HeyEmoji Slack app to AWS using Terraform and Ansible and orchestrating the tools using BitOps! 
 
 HeyEmoji is a fantastic reward system teams can use to recognize each others accomplishments, dedication and hard work. BitOps is an Operations Repo orchestration tool which enables teams to write their infrastructure as code and deploy that code easily across multiple environments. 
 
@@ -15,7 +15,7 @@ HeyEmoji is a fantastic reward system teams can use to recognize each others acc
 
 This tutorial involves a small EKS cluster and deploying an application to it. Because of this, there will be AWS compute charges for completing this tutorial.
 
-If you prefer skipping ahead to the final solution, the code created for this tutorial is on [Github](https://github.com/PhillypHenning/heyemoji).
+If you prefer skipping ahead to the final solution, the code created for this tutorial is on [Github](https://github.com/PhillypHenning/operations-heyemoji.git).
 
 <hr/>
 
