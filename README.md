@@ -468,7 +468,7 @@ Using the Instructions taken from the HeyEmoji README;
 7. Run `heyemoji` specifying the above token! 🎉
 
 
-### **Deploy HeyEmoji using BitOps + Github Workflows**
+### **Deploy HeyEmoji using BitOps**
 And with all the above in place we are finally ready to deploy our HeyEmoji Slack app!! Make sure to replace the "VALUES" to represent your credentials and tokens. 
 
 ```
@@ -506,4 +506,4 @@ bitovi/bitops:latest
 
 
 ### Final word
-Great work! You've deployed the HeyEmoji slack app to your aws infrastructure using Terraform and Ansible, and we orchestrated the build + deploy using BitOps. We learned a few concepts such as what an OpsRepo is and what best practices there are when building our application images. 
+Great work! You've deployed the HeyEmoji slack app to your aws infrastructure using Terraform and Ansible, and we orchestrated the build + deploy using BitOps. We learned a few concepts such as what an OpsRepo is and what best practices we should consider when building our application images. 
